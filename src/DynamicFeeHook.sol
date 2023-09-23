@@ -36,7 +36,7 @@ contract DynamicFeeHook is BaseHook, IDynamicFeeManager {
             afterInitialize: false,
             beforeModifyPosition: false,
             afterModifyPosition: false,
-            beforeSwap: true,
+            beforeSwap: false,
             afterSwap: true,
             beforeDonate: false,
             afterDonate: false
