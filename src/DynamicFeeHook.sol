@@ -28,7 +28,21 @@ contract DynamicFeeHook is BaseHook, IDynamicFeeManager {
     mapping(PoolId poolId => mapping(uint256 blockNumber => uint24 buyDynamicFee) ) public buyDynamicFees;
     mapping(PoolId poolId => mapping(uint256 blockNumber => uint24 sellDynamicFee)) public sellDynamicFees;
 
-    constructor(IPoolManager _poolManager) BaseHook(_poolManager) IDynamicFeeManager() {}
+    // Compound address
+    address public cometAddress;
+    // Aave address
+    address public aaveAddress
+    // which lending protocol to use
+    string public lendingProtocol;
+
+    constructor(
+        IPoolManager _poolManager,
+        address _cometAddress,
+        address _aaveAddress
+    ) BaseHook(_poolManager) IDynamicFeeManager() {
+        cometAddress = _cometAddress;
+        aaveAddress = _aaveAddress;
+    }
 
     function getHooksCalls() public pure override returns (Hooks.Calls memory) {
         return Hooks.Calls({
@@ -115,7 +129,58 @@ contract DynamicFeeHook is BaseHook, IDynamicFeeManager {
     function afterSwap(address, PoolKey calldata key, IPoolManager.SwapParams calldata, BalanceDelta, bytes calldata) external override poolManagerOnly returns (bytes4 selector) {
         (, int24 currentTickLower, , , ,) = poolManager.getSlot0(key.toId());
         _setTickLower(key.toId(), uint24(currentTickLower));
+
         return BaseHook.afterSwap.selector;
+    }
+
+    function afterModifyPosition(
+        address,
+        PoolKey calldata key,
+        IPoolManager.ModifyPositionParams calldata params,
+        BalanceDelta,
+        bytes calldata
+    ) external virtual returns (bytes4) {
+        // TODO: add other flags to make sure this modify is moving the rewards to the lending protocol
+        // negative delta means withdrawing liquidity
+        if (BalanceDelta < 0) {
+            if (lendingProtocol == "compound") {
+                _depositToCompound(key, params);
+            } else if (lendingProtocol == "aave") {
+                _depositToAave(key, params);
+            }
+        }
+    }
+
+    function setLendingProtocolChoice(string _lendingProtocol) external {
+        lendingProtocol = _lendingProtocol;
+    }
+
+    function _depositToCompound(
+        PoolKey calldata key,
+        IPoolManager.ModifyPositionParams calldata params,
+        uint256 amount
+    ) private {
+        address asset0 = Currency.unwrap(key.currency0);
+        ERC20(asset0).approve(cometAddress, BalanceDelta);
+        Comet(cometAddress).supply(asset0, BalanceDelta);
+
+        address asset1 = Currency.unwrap(key.currency1);
+        ERC20(asset1).approve(cometAddress, BalanceDelta);
+        Comet(cometAddress).supply(asset1, BalanceDelta);
+    }
+
+    function _depositToAAVE(
+        PoolKey calldata key,
+        IPoolManager.ModifyPositionParams calldata params,
+        uint256 amount
+    ) private {
+        address asset0 = Currency.unwrap(key.currency0);
+        ERC20(asset0).approve(aaveAddress, BalanceDelta);
+        LendingPool(cometAddress).deposit(asset0, BalanceDelta);
+
+        address asset1 = Currency.unwrap(key.currency1);
+        ERC20(asset1).approve(cometAddress, BalanceDelta);
+        LendingPool(cometAddress).deposit(asset1, BalanceDelta);
     }
 
     function tenPercent(uint24 fee) private pure returns (uint24 newFee) {
